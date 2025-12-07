@@ -52,6 +52,18 @@ async function run() {
     const db = client.db('ticket-bari_db')
     const usersCollection = db.collection('users');
 
+    const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded_email;
+            const query = { email };
+            const user = await usersCollection.findOne(query);
+
+            if (!user || user.role !== 'admin') {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+
+            next();
+        }
+    
     // user related api's
     app.get('/users', verifyFBToken, async (req, res) => {
       const cursor = usersCollection.find();
@@ -75,12 +87,23 @@ async function run() {
     })
 
     app.get('/users/:email/role', async (req, res) => {
-            const email = req.params.email;
-            const user = await usersCollection.findOne({ email });
-            res.send({ role: user?.role || 'user' })
-        })
+      const email = req.params.email;
+      const user = await usersCollection.findOne({ email });
+      res.send({ role: user?.role || 'user' })
+    })
 
-
+    app.patch('/users/:id/role', verifyFBToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const roleInfo = req.body;
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          role: roleInfo.role
+        }
+      }
+      const result = await userCollection.updateOne(query, updateDoc);
+      res.send(result)
+    })
 
 
 
