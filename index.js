@@ -51,19 +51,28 @@ async function run() {
 
     const db = client.db('ticket-bari_db')
     const usersCollection = db.collection('users');
+    const ticketsCollection = db.collection('tickets');
 
     const verifyAdmin = async (req, res, next) => {
-            const email = req.decoded_email;
-            const query = { email };
-            const user = await usersCollection.findOne(query);
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
 
-            if (!user || user.role !== 'admin') {
-                return res.status(403).send({ message: 'forbidden access' })
-            }
+      if (!user || user.role !== 'admin') {
+        return res.status(403).send({ message: 'forbidden access' })
+      }
 
-            next();
-        }
-    
+      next();
+    }
+
+    // tickets related api's
+    app.get('/tickets', async (req, res) => {
+      const cursor = ticketsCollection.find();
+      const result = await cursor.toArray();
+      res.send(result)
+    })
+
+
     // user related api's
     app.get('/users', verifyFBToken, async (req, res) => {
       const cursor = usersCollection.find();
