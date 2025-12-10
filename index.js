@@ -6,7 +6,11 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
+}));
 app.use(express.json());
 
 const verifyFBToken = async (req, res, next) => {
@@ -67,27 +71,61 @@ async function run() {
 
     // tickets related api's
     app.get('/tickets', async (req, res) => {
-      const cursor = ticketsCollection.find();
-      const result = await cursor.toArray();
+      const result = await ticketsCollection.find().toArray();
       res.send(result)
     })
 
     app.get('/tickets/:id', async (req, res) => {
       const id = req.params.id;
 
-      const result=await ticketsCollection.findOne({ _id: new ObjectId(id) });
-      
+      const result = await ticketsCollection.findOne({ _id: new ObjectId(id) });
+
       res.send(result)
+    })
+
+    app.post('/tickets', async (req, res) => {
+      const ticketData = req.body;
+      ticketData.createdAt = new Date();
+      ticketData.verificationStatus = 'pending';
+      ticketData.availableQuantity = ticketData.quantity;
+
+      const result = await ticketsCollection.insertOne(ticketData)
+      res.send({
+        success: true,
+        message: 'ticket added',
+        insertedId: result.insertedId
+      })
     })
 
 
     // user related api's
-    app.get('/users', verifyFBToken, async (req, res) => {
-      const cursor = usersCollection.find();
-      const result = await cursor.toArray();
-      res.send(result)
-    })
+    app.get('/users', async (req, res) => {
+      const email = req.query.email;
 
+      if (email) {
+        try {
+          const user = await usersCollection.findOne({ email });
+
+          if (!user) {
+            return res.status(404).send({ error: 'User not found' });
+          }
+
+          return res.send(user);
+        } catch (error) {
+          console.error('Error fetching user:', error);
+          return res.status(500).send({ error: 'Internal server error' });
+        }
+      }
+
+      try {
+        const cursor = usersCollection.find();
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        console.error('Error fetching users:', error);
+        res.status(500).send({ error: 'Internal server error' });
+      }
+    });
     app.post('/users', async (req, res) => {
       const user = req.body;
       user.role = 'user';
