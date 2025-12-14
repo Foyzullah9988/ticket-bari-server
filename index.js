@@ -6,6 +6,14 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 3000;
 
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./ticketBari.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
 app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
@@ -35,6 +43,9 @@ const verifyFBToken = async (req, res, next) => {
 app.get('/', (req, res) => {
   res.send('running the operation')
 })
+
+
+
 
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.r5czbuf.mongodb.net/?appName=Cluster0`;
@@ -71,7 +82,12 @@ async function run() {
 
     // tickets related api's
     app.get('/tickets', async (req, res) => {
-      const result = await ticketsCollection.find().toArray();
+      const { vendorEmail } = req.query;
+      let query = {};
+      if (vendorEmail) {
+        query.vendorEmail = vendorEmail
+      }
+      const result = await ticketsCollection.find(query).toArray();
       res.send(result)
     })
 
@@ -82,6 +98,22 @@ async function run() {
 
       res.send(result)
     })
+
+    app.patch('/tickets/:id',  async (req, res) => {
+      const id = req.params.id;
+      const verificationStatus = req.body.verificationStatus;
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          verificationStatus: verificationStatus,
+        }
+      }
+
+      const result = await ticketsCollection.updateOne(query, updateDoc);
+      res.send(result)
+    })
+
+
 
     app.post('/tickets', async (req, res) => {
       const ticketData = req.body;
