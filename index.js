@@ -99,6 +99,15 @@ async function run() {
       res.send(result)
     })
 
+ 
+    app.delete('/tickets/:id', async (req, res) => {
+      const id = req.params.id;
+
+      const result = await ticketsCollection.deleteOne({ _id: new ObjectId(id) });
+
+      res.send(result)
+    })
+
     app.patch('/tickets/:id',  async (req, res) => {
       const id = req.params.id;
       const verificationStatus = req.body.verificationStatus;
