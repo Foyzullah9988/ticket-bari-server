@@ -99,7 +99,16 @@ async function run() {
       res.send(result)
     })
 
- 
+    app.patch('/tickets/:id', async (req, res) => {
+      const id = req.params.id;
+      const update = {
+        $set: req.body
+      }
+      const result = await ticketsCollection.updateOne({ _id: new ObjectId(id) }, update);
+
+      res.send(result)
+    })
+
     app.delete('/tickets/:id', async (req, res) => {
       const id = req.params.id;
 
@@ -108,7 +117,7 @@ async function run() {
       res.send(result)
     })
 
-    app.patch('/tickets/:id',  async (req, res) => {
+    app.patch('/tickets/:id', async (req, res) => {
       const id = req.params.id;
       const verificationStatus = req.body.verificationStatus;
       const query = { _id: new ObjectId(id) };
