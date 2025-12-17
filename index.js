@@ -176,6 +176,7 @@ async function run() {
         res.status(500).send({ error: 'Internal server error' });
       }
     });
+
     app.post('/users', async (req, res) => {
       const user = req.body;
       user.role = 'user';
@@ -191,7 +192,19 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/users/:email/role', async (req, res) => {
+    app.patch('/users/:id', async (req, res) => {
+      const id = req.params.id;
+      const role = req.body.role;
+      const update = {
+        $set: {
+          role: role,
+        }
+      }
+      const result = await usersCollection.updateOne({ _id: new ObjectId(id) }, update);
+      res.send(result)
+    })
+
+    app.get('/users/:email/role', verifyFBToken, verifyAdmin, async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
       res.send({ role: user?.role || 'user' })
@@ -206,9 +219,11 @@ async function run() {
           role: roleInfo.role
         }
       }
-      const result = await userCollection.updateOne(query, updateDoc);
+      const result = await usersCollection.updateOne(query, updateDoc);
       res.send(result)
     })
+
+
 
 
 
