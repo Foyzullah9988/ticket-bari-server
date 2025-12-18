@@ -1,6 +1,9 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config()
+const stripe = require("stripe")((process.env.STRIPE_SECRET_KEY), {
+  apiVersion: "2025-12-15.clover",
+});
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const app = express();
@@ -14,8 +17,9 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
 
+
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  origin: [(process.env.CLIENT_HOST), (process.env.LOCAL_HOST)],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 }));
@@ -67,6 +71,7 @@ async function run() {
     const db = client.db('ticket-bari_db')
     const usersCollection = db.collection('users');
     const ticketsCollection = db.collection('tickets');
+    const bookingsCollection = db.collection('bookings');
 
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded_email;
@@ -79,6 +84,49 @@ async function run() {
 
       next();
     }
+
+    // payment related api
+    app.post("/create-checkout-session", async (req, res) => {
+      const paymentInfo = req.body;
+
+      const session = await stripe.checkout.sessions.create({
+        ui_mode: "custom",
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              unit_amount: paymentInfo.price * 100,
+              product_data: {
+                name: paymentInfo.title,
+              },
+            },
+
+            quantity: 1,
+          },
+        ],
+        mode: "payment",
+        metadata: {
+          ticketId: paymentInfo.ticketId,
+
+        },
+        customer_email: paymentInfo.email,
+        success_url: `${process.env.CLIENT_HOST}/dashboard/payment-success`,
+        cancel_url: `${process.env.CLIENT_HOST}/dashboard/payment-cancelled`,
+      });
+      console.log(session);
+      res.send({ url: session.url });
+    });
+
+
+
+
+
+
+   
+
+
+
+
 
     // tickets related api's
     app.get('/tickets', async (req, res) => {
@@ -119,22 +167,22 @@ async function run() {
 
     app.patch('/tickets/:id', async (req, res) => {
       const id = req.params.id;
-      const {verificationStatus,isAdvertise,advertisement} = req.body;
+      const { verificationStatus, isAdvertise, advertisement } = req.body;
 
       const query = { _id: new ObjectId(id) };
       const updateDoc = {
         $set: {
-          
+
         }
       }
 
-      if(verificationStatus!== undefined){
+      if (verificationStatus !== undefined) {
         updateDoc.$set.verificationStatus = verificationStatus;
       }
-      if(isAdvertise!== undefined){
+      if (isAdvertise !== undefined) {
         updateDoc.$set.isAdvertise = isAdvertise;
       }
-      if(advertisement!== undefined){
+      if (advertisement !== undefined) {
         updateDoc.$set.advertisement = advertisement;
       }
 
@@ -142,7 +190,7 @@ async function run() {
       res.send(result)
     })
 
-    
+
     app.post('/tickets', async (req, res) => {
       const ticketData = req.body;
       ticketData.createdAt = new Date();
