@@ -119,20 +119,30 @@ async function run() {
 
     app.patch('/tickets/:id', async (req, res) => {
       const id = req.params.id;
-      const verificationStatus = req.body.verificationStatus;
+      const {verificationStatus,isAdvertise,advertisement} = req.body;
+
       const query = { _id: new ObjectId(id) };
       const updateDoc = {
         $set: {
-          verificationStatus: verificationStatus,
+          
         }
+      }
+
+      if(verificationStatus!== undefined){
+        updateDoc.$set.verificationStatus = verificationStatus;
+      }
+      if(isAdvertise!== undefined){
+        updateDoc.$set.isAdvertise = isAdvertise;
+      }
+      if(advertisement!== undefined){
+        updateDoc.$set.advertisement = advertisement;
       }
 
       const result = await ticketsCollection.updateOne(query, updateDoc);
       res.send(result)
     })
 
-
-
+    
     app.post('/tickets', async (req, res) => {
       const ticketData = req.body;
       ticketData.createdAt = new Date();
@@ -204,24 +214,24 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/users/:email/role', verifyFBToken, verifyAdmin, async (req, res) => {
+    app.get('/users/:email/role', verifyFBToken, async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
       res.send({ role: user?.role || 'user' })
     })
 
-    app.patch('/users/:id/role', verifyFBToken, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const roleInfo = req.body;
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-          role: roleInfo.role
-        }
-      }
-      const result = await usersCollection.updateOne(query, updateDoc);
-      res.send(result)
-    })
+    // app.patch('/users/:id/role', verifyFBToken, async (req, res) => {
+    //   const id = req.params.id;
+    //   const roleInfo = req.body;
+    //   const query = { _id: new ObjectId(id) };
+    //   const updateDoc = {
+    //     $set: {
+    //       role: roleInfo.role
+    //     }
+    //   }
+    //   const result = await usersCollection.updateOne(query, updateDoc);
+    //   res.send(result)
+    // })
 
 
 
