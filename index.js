@@ -122,9 +122,20 @@ async function run() {
 
 
 
-   
+    // booking related api's
+    app.post('/bookings', async (req, res) => {
+      const booking = req.body;
+      booking.createdAt = new Date();
+      const result = await db.collection('bookings').insertOne(booking);
+      res.send({
+        success: true,
+        message: 'booking added',
+        insertedId: result.insertedId
+      })
+    })
 
 
+    
 
 
 
