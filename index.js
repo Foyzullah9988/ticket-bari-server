@@ -123,10 +123,23 @@ async function run() {
 
 
     // booking related api's
+    app.get('/bookings', async (req, res) => {
+      const {vendorEmail , userEmail} = req.query;
+      let query = {};
+      if(vendorEmail){
+        query.vendorEmail = vendorEmail
+      }
+      if(userEmail){
+        query.userEmail = userEmail
+      }
+      const result = await bookingsCollection.find(query).toArray();
+      res.send(result)
+    })
+
     app.post('/bookings', async (req, res) => {
       const booking = req.body;
       booking.createdAt = new Date();
-      const result = await db.collection('bookings').insertOne(booking);
+      const result = await bookingsCollection.insertOne(booking);
       res.send({
         success: true,
         message: 'booking added',
