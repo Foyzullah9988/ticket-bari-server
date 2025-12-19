@@ -1,9 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config()
-const stripe = require("stripe")((process.env.STRIPE_SECRET_KEY), {
-  apiVersion: "2025-12-15.clover",
-});
+const stripe = require("stripe")((process.env.STRIPE_SECRET_KEY));
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const app = express();
@@ -85,38 +83,126 @@ async function run() {
       next();
     }
 
+
+
+
     // payment related api
     app.post("/create-checkout-session", async (req, res) => {
-      const paymentInfo = req.body;
+      try {
+        const paymentInfo = req.body;
+        if (!paymentInfo.totalPrice || !paymentInfo.ticketId || !paymentInfo.userEmail) {
+          return res.status(400).json({ error: "Missing required fields" });
+        }
 
-      const session = await stripe.checkout.sessions.create({
-        ui_mode: "custom",
-        line_items: [
-          {
-            price_data: {
-              currency: "usd",
-              unit_amount: paymentInfo.price * 100,
-              product_data: {
-                name: paymentInfo.title,
+        // Create Stripe checkout session
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ['card'],
+          line_items: [
+            {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: paymentInfo.ticketTitle ,
+                },
+                unit_amount: Math.round(paymentInfo.totalPrice * 100),
               },
+              quantity: 1,
             },
-
-            quantity: 1,
+          ],
+          mode: 'payment',
+          metadata: {
+            ticketId: paymentInfo.ticketId,
+            userEmail: paymentInfo.userEmail,
           },
-        ],
-        mode: "payment",
-        metadata: {
-          ticketId: paymentInfo.ticketId,
 
-        },
-        customer_email: paymentInfo.email,
-        success_url: `${process.env.CLIENT_HOST}/dashboard/payment-success`,
-        cancel_url: `${process.env.CLIENT_HOST}/dashboard/payment-cancelled`,
-      });
-      console.log(session);
-      res.send({ url: session.url });
+          success_url: `${process.env.CLIENT_HOST}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}&ticketId=${paymentInfo.ticketId}`,
+          cancel_url: `${process.env.CLIENT_HOST}/dashboard/payment-cancelled?ticketId=${paymentInfo.ticketId}`,
+
+          // Disable address collection
+          billing_address_collection: 'auto',
+
+          customer_creation: 'if_required',
+        });
+        res.json({ url: session.url });
+
+      } catch (error) {
+        res.status(500).json({
+          error: error.message || "Payment failed",
+          code: error.code
+        });
+      }
     });
 
+    app.patch('/payment-success', async (req, res) => {
+      try {
+        const { session_id } = req.query;
+
+        console.log("Payment success called with session_id:", session_id);
+
+        if (!session_id) {
+          return res.status(400).json({ error: "Session ID is required" });
+        }
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+
+        console.log("Stripe session retrieved:", {
+          id: session.id,
+          payment_status: session.payment_status,
+          metadata: session.metadata
+        });
+
+        const ticketId = session.metadata?.ticketId;
+
+        if (!ticketId) {
+          return res.status(400).json({ error: "Ticket ID not found in session" });
+        }
+        const booking = await bookingsCollection.findOne({
+          _id: new ObjectId(ticketId)
+        });
+
+        if (!booking) {
+          return res.status(404).json({ error: "Booking not found" });
+        }
+        const updateResult = await bookingsCollection.updateOne(
+          { _id: new ObjectId(ticketId) },
+          {
+            $set: {
+              status: 'paid',
+              paymentStatus: 'completed',
+              paymentDate: new Date(),
+              stripeSessionId: session_id
+            }
+          }
+        );
+
+        console.log("Booking update result:", updateResult);
+
+        if (updateResult.modifiedCount > 0) {
+          const updatedBooking = await bookingsCollection.findOne({
+            _id: new ObjectId(ticketId)
+          });
+
+          res.status(200).json({
+            success: true,
+            message: "Payment processed successfully",
+            bookingReference: updatedBooking.bookingReference,
+            ticketId: updatedBooking._id,
+            status: updatedBooking.status,
+            paymentStatus: updatedBooking.paymentStatus
+          });
+        } else {
+          res.status(400).json({
+            error: "Failed to update booking status"
+          });
+        }
+
+      } catch (error) {
+        console.error("Payment success error:", error);
+        res.status(500).json({
+          error: "Failed to process payment success",
+          details: error.message
+        });
+      }
+    });
 
 
 
@@ -124,17 +210,41 @@ async function run() {
 
     // booking related api's
     app.get('/bookings', async (req, res) => {
-      const {vendorEmail , userEmail} = req.query;
+      const { vendorEmail, userEmail } = req.query;
       let query = {};
-      if(vendorEmail){
+      if (vendorEmail) {
         query.vendorEmail = vendorEmail
       }
-      if(userEmail){
+      if (userEmail) {
         query.userEmail = userEmail
       }
       const result = await bookingsCollection.find(query).toArray();
       res.send(result)
     })
+
+    app.get('/bookings/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        // Check if ID is valid
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ error: 'Invalid booking ID' });
+        }
+
+        const result = await bookingsCollection.findOne({
+          _id: new ObjectId(id)
+        });
+
+        if (!result) {
+          return res.status(404).json({ error: 'Booking not found' });
+        }
+
+        res.status(200).json(result);
+      } catch (error) {
+        console.error('Error fetching booking:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
 
     app.post('/bookings', async (req, res) => {
       const booking = req.body;
@@ -157,8 +267,14 @@ async function run() {
     }
     )
 
+    app.delete('/bookings/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await bookingsCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result)
+    })
 
-    
+
+
 
 
 
