@@ -102,7 +102,7 @@ async function run() {
               price_data: {
                 currency: 'usd',
                 product_data: {
-                  name: paymentInfo.ticketTitle ,
+                  name: paymentInfo.ticketTitle,
                 },
                 unit_amount: Math.round(paymentInfo.totalPrice * 100),
               },
@@ -255,6 +255,27 @@ async function run() {
         message: 'booking added',
         insertedId: result.insertedId
       })
+    })
+
+    app.get('/bookings/revenue/status', async (req, res) => {
+      
+      const pipeline = [
+        {
+          $match: {
+            status: 'paid'
+          }
+        },
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 },
+            totalRevenue: { $sum: '$totalPrice' },
+            totalTicketSold: { $sum: '$quantity' }
+          }
+        }
+      ]
+      const result = await bookingsCollection.aggregate(pipeline).toArray();
+      res.send(result)
     })
 
     app.patch('/bookings/:id', async (req, res) => {
