@@ -9,7 +9,13 @@ const port = process.env.PORT || 3000;
 
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./ticketBari.json");
+// comment
+// const serviceAccount = require("./ticketBari.json");
+// comment
+// const serviceAccount = require("./firebase-admin-key.json");
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -17,30 +23,31 @@ admin.initializeApp({
 
 
 app.use(cors({
-  origin: [(process.env.CLIENT_HOST), (process.env.LOCAL_HOST)],
+  origin: ['https://ticket-bari-15f05.web.app', process.env.LOCAL_HOST],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 }));
 app.use(express.json());
 
 const verifyFBToken = async (req, res, next) => {
-  // console.log(req.headers.authorization);
   const token = req.headers.authorization;
+
   if (!token) {
-    return res.status(401).send({ message: 'unauthorize access' })
+    return res.status(401).send({ message: 'Unauthorized access' });
   }
+
   try {
     const idToken = token.split(' ')[1];
-    // console.log(idToken);
+
     const decoded = await admin.auth().verifyIdToken(idToken);
+
     req.decoded_email = decoded.email;
-    // console.log(decoded);
-    next()
+
+    next();
+  } catch (err) {
+    return res.status(401).send({ message: 'Unauthorized access' });
   }
-  catch (err) {
-    return res.status(401).send({ message: 'unauthorize access' })
-  }
-}
+};
 
 app.get('/', (req, res) => {
   res.send('running the operation')
@@ -64,7 +71,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const db = client.db('ticket-bari_db')
     const usersCollection = db.collection('users');
@@ -82,12 +89,23 @@ async function run() {
 
       next();
     }
+    const verifyVendor = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+
+      if (!user || user?.role !== 'vendor') {
+        return res.status(403).send({ message: 'forbidden access' })
+      }
+
+      next();
+    }
 
 
 
 
     // payment related api
-    app.post("/create-checkout-session", async (req, res) => {
+    app.post("/create-checkout-session", verifyFBToken, async (req, res) => {
       try {
         const paymentInfo = req.body;
         if (!paymentInfo.totalPrice || !paymentInfo.ticketId || !paymentInfo.userEmail) {
@@ -133,37 +151,41 @@ async function run() {
       }
     });
 
-    app.patch('/payment-success', async (req, res) => {
+    app.patch('/payment-success', verifyFBToken, async (req, res) => {
       try {
         const { session_id } = req.query;
-
-        console.log("Payment success called with session_id:", session_id);
 
         if (!session_id) {
           return res.status(400).json({ error: "Session ID is required" });
         }
+
         const session = await stripe.checkout.sessions.retrieve(session_id);
+        const bookingId = session.metadata?.ticketId;
 
-        console.log("Stripe session retrieved:", {
-          id: session.id,
-          payment_status: session.payment_status,
-          metadata: session.metadata
-        });
-
-        const ticketId = session.metadata?.ticketId;
-
-        if (!ticketId) {
-          return res.status(400).json({ error: "Ticket ID not found in session" });
+        if (!bookingId) {
+          return res.status(400).json({ error: "Booking ID not found" });
         }
+
+        // Find booking
         const booking = await bookingsCollection.findOne({
-          _id: new ObjectId(ticketId)
+          _id: new ObjectId(bookingId)
         });
 
         if (!booking) {
           return res.status(404).json({ error: "Booking not found" });
         }
-        const updateResult = await bookingsCollection.updateOne(
-          { _id: new ObjectId(ticketId) },
+
+        // Check if already paid
+        if (booking.status === 'paid') {
+          return res.status(200).json({
+            success: true,
+            message: "Already paid"
+          });
+        }
+
+        // Update booking status
+        await bookingsCollection.updateOne(
+          { _id: new ObjectId(bookingId) },
           {
             $set: {
               status: 'paid',
@@ -174,32 +196,21 @@ async function run() {
           }
         );
 
-        console.log("Booking update result:", updateResult);
+        // Update ticket quantity
+        await ticketsCollection.updateOne(
+          { _id: new ObjectId(booking.ticketId) },
+          { $inc: { availableQuantity: -booking.quantity } }
+        );
 
-        if (updateResult.modifiedCount > 0) {
-          const updatedBooking = await bookingsCollection.findOne({
-            _id: new ObjectId(ticketId)
-          });
-
-          res.status(200).json({
-            success: true,
-            message: "Payment processed successfully",
-            bookingReference: updatedBooking.bookingReference,
-            ticketId: updatedBooking._id,
-            status: updatedBooking.status,
-            paymentStatus: updatedBooking.paymentStatus
-          });
-        } else {
-          res.status(400).json({
-            error: "Failed to update booking status"
-          });
-        }
+        res.status(200).json({
+          success: true,
+          message: "Payment successful"
+        });
 
       } catch (error) {
-        console.error("Payment success error:", error);
+        console.error("Payment error:", error);
         res.status(500).json({
-          error: "Failed to process payment success",
-          details: error.message
+          error: "Payment processing failed"
         });
       }
     });
@@ -209,7 +220,7 @@ async function run() {
 
 
     // booking related api's
-    app.get('/bookings', async (req, res) => {
+    app.get('/bookings', verifyFBToken, async (req, res) => {
       const { vendorEmail, userEmail } = req.query;
       let query = {};
       if (vendorEmail) {
@@ -222,11 +233,10 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/bookings/:id', async (req, res) => {
+    app.get('/bookings/:id', verifyFBToken, async (req, res) => {
       try {
         const id = req.params.id;
 
-        // Check if ID is valid
         if (!ObjectId.isValid(id)) {
           return res.status(400).json({ error: 'Invalid booking ID' });
         }
@@ -246,7 +256,7 @@ async function run() {
       }
     });
 
-    app.post('/bookings', async (req, res) => {
+    app.post('/bookings', verifyFBToken, async (req, res) => {
       const booking = req.body;
       booking.createdAt = new Date();
       const result = await bookingsCollection.insertOne(booking);
@@ -257,8 +267,8 @@ async function run() {
       })
     })
 
-    app.get('/bookings/revenue/status', async (req, res) => {
-      
+    app.get('/bookings/revenue/status', verifyFBToken, async (req, res) => {
+
       const pipeline = [
         {
           $match: {
@@ -278,7 +288,7 @@ async function run() {
       res.send(result)
     })
 
-    app.patch('/bookings/:id', async (req, res) => {
+    app.patch('/bookings/:id', verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const update = {
         $set: req.body
@@ -288,7 +298,7 @@ async function run() {
     }
     )
 
-    app.delete('/bookings/:id', async (req, res) => {
+    app.delete('/bookings/:id', verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const result = await bookingsCollection.deleteOne({ _id: new ObjectId(id) });
       res.send(result)
@@ -310,7 +320,7 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/tickets/:id', async (req, res) => {
+    app.get('/tickets/:id', verifyFBToken, async (req, res) => {
       const id = req.params.id;
 
       const result = await ticketsCollection.findOne({ _id: new ObjectId(id) });
@@ -318,17 +328,75 @@ async function run() {
       res.send(result)
     })
 
-    app.patch('/tickets/:id', async (req, res) => {
-      const id = req.params.id;
-      const update = {
-        $set: req.body
+    app.patch('/tickets/:id', verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { verificationStatus, isAdvertise, advertisement, ...otherFields } = req.body;
+
+        const userEmail = req.decoded_email;
+        const user = await usersCollection.findOne({ email: userEmail });
+        if (!user) {
+          return res.status(404).send({ message: 'User not found' });
+        }
+
+        const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) });
+        if (!ticket) {
+          return res.status(404).send({ message: 'Ticket not found' });
+        }
+
+        const isAdmin = user.role === 'admin';
+        const isTicketOwner = ticket.vendorEmail === userEmail;
+
+        if (verificationStatus !== undefined && !isAdmin) {
+          return res.status(403).send({
+            message: 'Forbidden: Only admin can update verification status'
+          });
+        }
+
+        if ((isAdvertise !== undefined || advertisement !== undefined) &&
+          !isAdmin && !isTicketOwner) {
+          return res.status(403).send({
+            message: 'Forbidden: Only admin or ticket owner can update advertisement'
+          });
+        }
+
+        const updateDoc = { $set: {} };
+
+        if (verificationStatus !== undefined) {
+          updateDoc.$set.verificationStatus = verificationStatus;
+        }
+        if (isAdvertise !== undefined) {
+          updateDoc.$set.isAdvertise = isAdvertise;
+        }
+        if (advertisement !== undefined) {
+          updateDoc.$set.advertisement = advertisement;
+        }
+
+        if (Object.keys(otherFields).length > 0) {
+          if (!isAdmin && !isTicketOwner) {
+            return res.status(403).send({
+              message: 'Forbidden: Only admin or ticket owner can update other fields'
+            });
+          }
+          Object.keys(otherFields).forEach(key => {
+            updateDoc.$set[key] = otherFields[key];
+          });
+        }
+
+        const result = await ticketsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          updateDoc
+        );
+
+        res.send(result);
+
+      } catch (error) {
+        console.error('Error updating ticket:', error);
+        res.status(500).send({ message: 'Internal server error' });
       }
-      const result = await ticketsCollection.updateOne({ _id: new ObjectId(id) }, update);
+    });
 
-      res.send(result)
-    })
-
-    app.delete('/tickets/:id', async (req, res) => {
+    app.delete('/tickets/:id', verifyFBToken, async (req, res) => {
       const id = req.params.id;
 
       const result = await ticketsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -336,33 +404,10 @@ async function run() {
       res.send(result)
     })
 
-    app.patch('/tickets/:id', async (req, res) => {
-      const id = req.params.id;
-      const { verificationStatus, isAdvertise, advertisement } = req.body;
-
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-
-        }
-      }
-
-      if (verificationStatus !== undefined) {
-        updateDoc.$set.verificationStatus = verificationStatus;
-      }
-      if (isAdvertise !== undefined) {
-        updateDoc.$set.isAdvertise = isAdvertise;
-      }
-      if (advertisement !== undefined) {
-        updateDoc.$set.advertisement = advertisement;
-      }
-
-      const result = await ticketsCollection.updateOne(query, updateDoc);
-      res.send(result)
-    })
 
 
-    app.post('/tickets', async (req, res) => {
+
+    app.post('/tickets', verifyFBToken, async (req, res) => {
       const ticketData = req.body;
       ticketData.createdAt = new Date();
       ticketData.verificationStatus = 'pending';
@@ -375,6 +420,9 @@ async function run() {
         insertedId: result.insertedId
       })
     })
+
+
+
 
 
     // user related api's
@@ -406,7 +454,7 @@ async function run() {
       }
     });
 
-    app.post('/users', async (req, res) => {
+    app.post('/users', verifyFBToken, async (req, res) => {
       const user = req.body;
       user.role = 'user';
       user.createdAt = new Date();
@@ -421,7 +469,7 @@ async function run() {
       res.send(result)
     })
 
-    app.patch('/users/:id', async (req, res) => {
+    app.patch('/users/:id', verifyFBToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const role = req.body.role;
       const update = {
@@ -433,7 +481,7 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/users/:email/role', verifyFBToken, async (req, res) => {
+    app.get('/users/:email/role', async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
       res.send({ role: user?.role || 'user' })
@@ -462,8 +510,8 @@ async function run() {
 
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    // await client.db("admin").command({ ping: 1 });
+    // console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
