@@ -407,7 +407,7 @@ async function run() {
 
 
 
-    app.post('/tickets', verifyFBToken, async (req, res) => {
+    app.post('/tickets', verifyFBToken,verifyVendor, async (req, res) => {
       const ticketData = req.body;
       ticketData.createdAt = new Date();
       ticketData.verificationStatus = 'pending';
